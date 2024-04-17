@@ -1,5 +1,6 @@
 import { randomInt } from 'crypto';
-import {Plugin, ItemView, WorkspaceLeaf, TFile, normalizePath} from 'obsidian';
+import {Plugin, ItemView, WorkspaceLeaf, TFile, normalizePath, Notice} from 'obsidian';
+import { DMSettingsTab } from 'settings';
 
 type dayObject = {
 	dayName: string;
@@ -10,11 +11,23 @@ type yearObject = {
 	days: dayObject[];
 }
 
+interface DMSettings {
+	diaryPath: string;
+	notesCalender: string;
+}
+
+let DEFAULT_SETTINGS: Partial<DMSettings> = {
+	diaryPath: "",
+	notesCalender: "persian"
+};
+
 export const VIEW_TYPE_HEATMAP = "heatmap-view";
 
 export class HeatmapView extends ItemView {
-  constructor(leaf: WorkspaceLeaf) {
+  plugin: DiaryMonitor;
+  constructor(leaf: WorkspaceLeaf, plugin: DiaryMonitor) {
     super(leaf);
+	this.plugin = plugin;
   }
 
   getViewType() {
@@ -35,6 +48,8 @@ export class HeatmapView extends ItemView {
 
   async onOpen() {
 	let fileResults = await this.getFileValues();
+	if (!fileResults)
+		return;
 	let years = fileResults.years;
 	const container = this.containerEl.children[1];
 	container.empty();
@@ -130,7 +145,10 @@ export class HeatmapView extends ItemView {
   }
 
   async getFileValues() {
-	const daysFolder = app.vault.getFolderByPath(normalizePath("Diary"));
+	if (this.plugin.settings.diaryPath == "") {
+		new Notice("Set path in settings");
+	}
+	const daysFolder = app.vault.getFolderByPath(normalizePath(this.plugin.settings.diaryPath));
 	const dayFiles = daysFolder?.children;
 	let years: yearObject[] = [];
 	let minValue = 0;
@@ -143,7 +161,17 @@ export class HeatmapView extends ItemView {
 				return -a.basename.substring(0, 4).localeCompare(b.basename.substring(0, 4))
 		});
 		await dayFiles.forEach(async (file: TFile) => {
-			let year = file.basename.substring(0, 4);
+			let year: string;
+			if (this.plugin.settings.notesCalender == "persian") {
+				year = file.basename.substring(0, 4);
+			} else if (this.plugin.settings.notesCalender == "gregorian") {
+				year = String(this.gregorian_to_jalali(+file.basename.substring(0, 4), 
+														+file.basename.substring(5, 7), 
+														+file.basename.substring(8, 10))[0]);
+			} else {
+				new Notice("Invalid settings: Notes calender system");
+				return;
+			}
 			let frontMatterEnd = app.metadataCache.getFileCache(file)?.frontmatterPosition?.end.offset;
 			let text = (await app.vault.cachedRead(file)).substring(frontMatterEnd??0);
 			while (text[0] == '\n' || text[0] == '\r')
@@ -154,7 +182,19 @@ export class HeatmapView extends ItemView {
 				minValue = value;
 			if (value > maxValue)
 				maxValue = value;
-			let dayObj = {dayName: file.basename.substring(0, 10), value: value};
+			let dayName: string;
+			if (this.plugin.settings.notesCalender == "persian") {
+				dayName = file.basename.substring(0, 10);
+			} else if (this.plugin.settings.notesCalender == "gregorian") {
+				let dayArr = this.gregorian_to_jalali(+file.basename.substring(0, 4), 
+														+file.basename.substring(5, 7), 
+														+file.basename.substring(8, 10));
+				dayName = "" + dayArr[0] + "-" + String(dayArr[1]).padStart(2, '0') + "-" + String(dayArr[2]).padStart(2, '0');
+			} else {
+				new Notice("Invalid settings: Notes calender system");
+				return;
+			}
+			let dayObj = {dayName: dayName, value: value};
 			if (!years.find(x => x.yearName == year))
 				years.push({yearName: year, days: [dayObj]});
 			else
@@ -166,10 +206,24 @@ export class HeatmapView extends ItemView {
 }
 
 export default class DiaryMonitor extends Plugin {
+	settings: DMSettings;
+
+	async loadSettings() {
+		this.settings = await Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+	}
+
+	async saveSettings() {
+		this.saveData(this.settings);
+	}
+
 	async onload() {
+		await this.loadSettings();
+
+		this.addSettingTab(new DMSettingsTab(this.app, this));
+
 		this.registerView(
 			VIEW_TYPE_HEATMAP,
-			(leaf) => new HeatmapView(leaf)
+			(leaf) => new HeatmapView(leaf, this)
 			);
 
 		this.addRibbonIcon("layout-grid", "Open heatmap view", () => {
@@ -178,7 +232,7 @@ export default class DiaryMonitor extends Plugin {
 	}
 
 	async onunload() {
-		//app.workspace.detachLeavesOfType(VIEW_TYPE_HEATMAP);
+		app.workspace.detachLeavesOfType(VIEW_TYPE_HEATMAP);
 	}
 
 	async activateView() {
