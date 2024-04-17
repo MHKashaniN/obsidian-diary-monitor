@@ -6,3 +6,19 @@ available in the app when your plugin is enabled.
 If your plugin does not need CSS, delete this file.
 
 */
+
+.day-block {
+	border-style: solid;
+	border-width: 1px;
+	border-radius: 25%;
+}
+
+.year-block {
+	position: relative;
+	margin-bottom: 30px;
+}
+
+.year-name {
+	margin-top: 10px;
+	margin-bottom: 10px;
+}

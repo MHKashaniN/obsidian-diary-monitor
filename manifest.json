@@ -1,11 +1,10 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
+	"id": "obsidian-diary-monitor",
+	"name": "Diary Monitor",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"description": "Extract usefull hitmaps from your diary or daily notes",
+	"author": "MHKashaniN",
+	"authorUrl": "https://github.com/MHKashaniN",
 	"isDesktopOnly": false
 }
