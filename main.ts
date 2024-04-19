@@ -1,5 +1,4 @@
-import { randomInt } from 'crypto';
-import {Plugin, ItemView, WorkspaceLeaf, TFile, normalizePath, Notice} from 'obsidian';
+import {Plugin, ItemView, WorkspaceLeaf, TFile, normalizePath, Notice, Setting, HSL, ColorComponent} from 'obsidian';
 import { DMSettingsTab } from 'settings';
 
 type dayObject = {
@@ -14,17 +13,24 @@ type yearObject = {
 interface DMSettings {
 	diaryPath: string;
 	notesCalender: string;
+	displayCalender: string;
+	minColor: HSL;
+	maxColor: HSL;
 }
 
 let DEFAULT_SETTINGS: Partial<DMSettings> = {
 	diaryPath: "",
-	notesCalender: "persian"
+	notesCalender: "persian",
+	displayCalender: "Persian",
+	minColor: {h: 134, s: 100, l: 100},
+	maxColor: {h: 134, s: 100, l: 20}
 };
 
 export const VIEW_TYPE_HEATMAP = "heatmap-view";
 
 export class HeatmapView extends ItemView {
   plugin: DiaryMonitor;
+
   constructor(leaf: WorkspaceLeaf, plugin: DiaryMonitor) {
     super(leaf);
 	this.plugin = plugin;
@@ -47,46 +53,142 @@ export class HeatmapView extends ItemView {
   }
 
   async onOpen() {
-	let fileResults = await this.getFileValues();
-	if (!fileResults)
-		return;
-	let years = fileResults.years;
 	const container = this.containerEl.children[1];
 	container.empty();
-
-	let viewWidthStr = container.getCssPropertyValue("width");
-	let viewWidth: number = viewWidthStr.substring(0, viewWidthStr.length-2) as unknown as number;
-	let dayBlockSize: number = 0.8 * viewWidth / 55;
-	if (years) {
-		for (let year of years) {
-			this.createYearBlock(container, year, viewWidth, dayBlockSize, fileResults.minValue, fileResults.maxValue);
-		}
-	}
+	let heatmapEl = container.createDiv();
+	this.createHeatmap(heatmapEl);
+	let settingsEl = container.createDiv();
+	this.createSettings(settingsEl, heatmapEl);
   }
 
   async onClose() {
     // Nothing to clean up.
   }
 
+  createSettings(settingsEl: HTMLElement, heatmapEl: HTMLElement) {
+	settingsEl.empty();
+	new Setting(settingsEl)
+            .setName("Display Calender System")
+            .setDesc("Calender system to create heatmap")
+            .addDropdown((item) => {
+                item.addOption("persian", "Persian")
+                    .addOption("gregorian", "Gregorain")
+                    .setValue(this.plugin.settings.displayCalender)
+                    .onChange((value) => {
+                        this.plugin.settings.displayCalender = value;
+						this.createHeatmap(heatmapEl);
+                        this.plugin.saveSettings();
+                    })
+            });
+	let settingEl = new Setting(settingsEl);
+	let colorRangeEl = createDiv();
+	settingEl.setName("Color range").setDesc("Set color of minimum and maximum value");
+	let minColorPicker: ColorComponent;
+	let maxColorPicker: ColorComponent;
+	settingEl.addColorPicker((item) => {
+		minColorPicker = item;
+		item.setValueHsl(this.plugin.settings.minColor)
+			.onChange((value) => {
+				this.plugin.settings.minColor = item.getValueHsl();
+				this.plugin.saveSettings();
+				this.createColorRangeEl(colorRangeEl, size, this.plugin.settings.minColor, this.plugin.settings.maxColor);
+				this.createHeatmap(heatmapEl);
+			});
+	});
+	let elementWidthstr = settingEl.controlEl.getCssPropertyValue("height");
+	let size = +elementWidthstr.substring(0, elementWidthstr.length-2);
+	this.createColorRangeEl(colorRangeEl, size, this.plugin.settings.minColor, this.plugin.settings.maxColor);
+	settingEl.controlEl.appendChild(colorRangeEl);
+	settingEl.addColorPicker((item) => {
+		maxColorPicker = item;
+		item.setValueHsl(this.plugin.settings.maxColor)
+			.onChange((value) => {
+				this.plugin.settings.maxColor = item.getValueHsl();
+				this.plugin.saveSettings();
+				this.createColorRangeEl(colorRangeEl, size, this.plugin.settings.minColor, this.plugin.settings.maxColor);
+				this.createHeatmap(heatmapEl);
+			});
+	});
+	settingEl.addButton((item) => {
+		item.setButtonText("Reset")
+			.onClick((event) => {
+				this.plugin.settings.minColor = DEFAULT_SETTINGS.minColor?? this.plugin.settings.minColor;
+				this.plugin.settings.maxColor = DEFAULT_SETTINGS.maxColor?? this.plugin.settings.maxColor;
+				this.plugin.saveSettings();
+				minColorPicker.setValueHsl(this.plugin.settings.minColor);
+				maxColorPicker.setValueHsl(this.plugin.settings.maxColor);
+				this.createColorRangeEl(colorRangeEl, size, this.plugin.settings.minColor, this.plugin.settings.maxColor);
+				this.createHeatmap(heatmapEl);
+			})
+	});
+  }
+
+  createColorRangeEl(element: HTMLElement, dayBlockSize: number, min: HSL, max: HSL) {
+	dayBlockSize *= 0.9;
+	element.empty();
+	for (let i = 0; i < 5; i++) {
+		let dayBlock = element.createDiv({ cls: "day-block"});
+		dayBlock.style.width = String(dayBlockSize) + "px";
+		dayBlock.style.height = String(dayBlockSize) + "px";
+		let h = min.h + i*(max.h - min.h)/4;
+		let s = min.s + i*(max.s - min.s)/4;
+		let l = min.l + i*(max.l - min.l)/4;
+		dayBlock.style.backgroundColor = "hsl(" + String(h) + ", " + String(s) + "%, " + String(l) + "%)";
+		dayBlock.style.display = "inline-block";
+		dayBlock.style.margin = String(dayBlockSize/9/2) + "px";
+		dayBlock.style.verticalAlign = "middle";
+	}
+  }
+
+  async createHeatmap(heatmapEl: HTMLElement) {
+	let fileResults = await this.getFileValues();
+	if (!fileResults)
+		return;
+	heatmapEl.empty();
+	let years = fileResults.years;
+	let viewWidthStr = heatmapEl.getCssPropertyValue("width");
+	let viewWidth: number = viewWidthStr.substring(0, viewWidthStr.length-2) as unknown as number;
+	let dayBlockSize: number = 0.8 * viewWidth / 55;
+	if (years) {
+		for (let year of years) {
+			this.createYearBlock(heatmapEl, year, viewWidth, dayBlockSize, fileResults.minValue, fileResults.maxValue);
+		}
+	}
+  }
+
   createYearBlock(container: Element, year: yearObject, viewWidth: number, dayBlockSize: number, minValue: number, maxValue: number) {
 	container.createEl("h1", { text: year.yearName, cls: "year-name"});
     let currentYear = container.createEl("div", { cls: "year-block"});
     currentYear.style.height = String(7 * dayBlockSize * 10 / 8) + "px";
-	let pDate: number[] = [+year.yearName, 1, 1]
-	let mDate = this.jalali_to_gregorian(pDate[0], pDate[1], pDate[2]);
+	let dDate: number[], mDate: number[];
+	if (this.plugin.settings.displayCalender == "persian") {
+		dDate = [+year.yearName, 1, 1];
+		mDate = this.jalali_to_gregorian(dDate[0], dDate[1], dDate[2]);
+	} else if (this.plugin.settings.displayCalender == "gregorian") {
+		mDate = dDate = [+year.yearName, 1, 1];
+	} else {
+		new Notice("Invalid settings: Display calender system");
+		return;
+	}
 	let date = new Date(mDate[0], mDate[1]-1, mDate[2]);
     let column: number = 0, row: number = (date.getDay() + 1) % 7;
-    while (pDate[0] == (year.yearName as unknown as number)) {
+    while (dDate[0] == (year.yearName as unknown as number)) {
     	let currentDay = currentYear.createEl("div", { cls: "day-block" });
-		let pDateStr: string = String(pDate[0]) + '-' + pDate[1].toString().padStart(2, '0') + '-' + pDate[2].toString().padStart(2, '0')
+		let pDateStr: string = String(dDate[0]) + '-' + dDate[1].toString().padStart(2, '0') + '-' + dDate[2].toString().padStart(2, '0')
 		let value = year.days.find((value: dayObject) => value.dayName == pDateStr)?.value;
+		let min = this.plugin.settings.minColor;
+		let max = this.plugin.settings.maxColor;
     	currentDay.style.position = "absolute";
     	currentDay.style.left = String(column * (viewWidth/55)) + "px";
     	currentDay.style.top = String(row * (viewWidth/55)) + "px";
     	currentDay.style.width = String(dayBlockSize) + "px";
     	currentDay.style.height = String(dayBlockSize) + "px";
-		if (value)
-			currentDay.style.backgroundColor = "hsl(134, 100%, " + String(100 - ((value - minValue)/(maxValue - minValue))*80) + "%)";
+		if (value) {
+			let h = min.h + (value - minValue)*(max.h - min.h)/(maxValue - minValue);
+			let s = min.s + (value - minValue)*(max.s - min.s)/(maxValue - minValue);
+			let l = min.l + (value - minValue)*(max.l - min.l)/(maxValue - minValue);
+			currentDay.style.backgroundColor = "hsl(" + String(h) + ", " + String(s) + "%, " + String(l) + "%)";
+		}
 
     	row ++;
     	if (row == 7) {
@@ -94,7 +196,14 @@ export class HeatmapView extends ItemView {
     		column ++;
     	}
 		date.setDate(date.getDate() + 1);
-		pDate = this.gregorian_to_jalali(date.getFullYear(), date.getMonth()+1, date.getDate());
+		if (this.plugin.settings.displayCalender == "persian") {
+			dDate = this.gregorian_to_jalali(date.getFullYear(), date.getMonth()+1, date.getDate());
+		} else if (this.plugin.settings.displayCalender == "gregorian") {
+			dDate = [date.getFullYear(), date.getMonth()+1, date.getDate()];
+		} else {
+			new Notice("Invalid settings: Notes calender system");
+			return;
+		}
     }
   }
 
@@ -163,11 +272,27 @@ export class HeatmapView extends ItemView {
 		await dayFiles.forEach(async (file: TFile) => {
 			let year: string;
 			if (this.plugin.settings.notesCalender == "persian") {
-				year = file.basename.substring(0, 4);
+				if (this.plugin.settings.displayCalender == "persian") {
+					year = file.basename.substring(0, 4);
+				} else if (this.plugin.settings.displayCalender == "gregorian") {
+					year = String(this.jalali_to_gregorian(+file.basename.substring(0, 4), 
+															+file.basename.substring(5, 7), 
+															+file.basename.substring(8, 10))[0]);
+				} else {
+					new Notice("Invalid settings: Display calender system");
+					return;
+				}
 			} else if (this.plugin.settings.notesCalender == "gregorian") {
-				year = String(this.gregorian_to_jalali(+file.basename.substring(0, 4), 
-														+file.basename.substring(5, 7), 
-														+file.basename.substring(8, 10))[0]);
+				if (this.plugin.settings.displayCalender == "persian") {
+					year = String(this.gregorian_to_jalali(+file.basename.substring(0, 4), 
+															+file.basename.substring(5, 7), 
+															+file.basename.substring(8, 10))[0]);
+				} else if (this.plugin.settings.displayCalender == "gregorian") {
+					year = file.basename.substring(0, 4);
+				} else {
+					new Notice("Invalid settings: Display calender system");
+					return;
+				}
 			} else {
 				new Notice("Invalid settings: Notes calender system");
 				return;
@@ -184,12 +309,29 @@ export class HeatmapView extends ItemView {
 				maxValue = value;
 			let dayName: string;
 			if (this.plugin.settings.notesCalender == "persian") {
-				dayName = file.basename.substring(0, 10);
+				if (this.plugin.settings.displayCalender == "persian") {
+					dayName = file.basename.substring(0, 10);
+				} else if (this.plugin.settings.displayCalender == "gregorian") {
+					let dayArr = this.jalali_to_gregorian(+file.basename.substring(0, 4), 
+															+file.basename.substring(5, 7), 
+															+file.basename.substring(8, 10));
+					dayName = "" + dayArr[0] + "-" + String(dayArr[1]).padStart(2, '0') + "-" + String(dayArr[2]).padStart(2, '0');
+				} else {
+					new Notice("Invalid settings: Display calender system");
+					return;
+				}
 			} else if (this.plugin.settings.notesCalender == "gregorian") {
-				let dayArr = this.gregorian_to_jalali(+file.basename.substring(0, 4), 
-														+file.basename.substring(5, 7), 
-														+file.basename.substring(8, 10));
-				dayName = "" + dayArr[0] + "-" + String(dayArr[1]).padStart(2, '0') + "-" + String(dayArr[2]).padStart(2, '0');
+				if (this.plugin.settings.displayCalender == "persian") {
+					let dayArr = this.gregorian_to_jalali(+file.basename.substring(0, 4), 
+															+file.basename.substring(5, 7), 
+															+file.basename.substring(8, 10));
+					dayName = "" + dayArr[0] + "-" + String(dayArr[1]).padStart(2, '0') + "-" + String(dayArr[2]).padStart(2, '0');
+				} else if (this.plugin.settings.displayCalender == "gregorian") {
+					dayName = file.basename.substring(0, 10);
+				} else {
+					new Notice("Invalid settings: Display calender system");
+					return;
+				}
 			} else {
 				new Notice("Invalid settings: Notes calender system");
 				return;
@@ -213,6 +355,10 @@ export default class DiaryMonitor extends Plugin {
 	}
 
 	async saveSettings() {
+		if (this.settings.minColor.s == 0) this.settings.minColor.h = this.settings.maxColor.h;
+		if (this.settings.maxColor.s == 0) this.settings.maxColor.h = this.settings.minColor.h;
+		if (this.settings.minColor.l == 0 || this.settings.minColor.l == 100) this.settings.minColor.s = this.settings.maxColor.s;
+		if (this.settings.maxColor.l == 0 || this.settings.maxColor.l == 100) this.settings.maxColor.s = this.settings.minColor.s;
 		this.saveData(this.settings);
 	}
 
